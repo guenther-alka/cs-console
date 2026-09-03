@@ -1,0 +1,6 @@
+cs-console
+cs-console.exe
+cs-console-darwin.amd64
+cs-console-darwin.arm64
+cs-console-illumos.amd64
+*.log
