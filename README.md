@@ -23,13 +23,12 @@ per project convention).
   (real ConPTY). **Cross-compiles cleanly, not yet run on real Windows.**
 - `pty_illumos.go` -- illumos backend, hand-rolled STREAMS pty via cgo (no
   `forkpty()` in illumos libc, see file header for the full rationale and
-  the reference implementations it follows). **UNTESTED -- needs a real
-  OmniOS/illumos machine with a C toolchain (`pkg install developer/gcc`)
-  to build and verify.** A cross-compile attempt from this Linux
-  sandbox got past Go/cgo parsing and failed only on missing illumos
-  system headers (`stropts.h`), which is expected -- cgo for this
-  platform has to be built ON that platform (or with an illumos sysroot
-  this sandbox doesn't have).
+  the reference implementations it follows). **Built and PTY-round-trip
+  verified on real OmniOS (2026.09.04, see below) -- the two compiler
+  bugs the first real build attempt found (`syscall.GetErrno` never
+  existed; `syscall.SYS_IOCTL` is genuinely undefined for illumos in
+  Go's stdlib) are fixed; `Resize()` now uses
+  `golang.org/x/sys/unix.IoctlSetWinsize`.**
 - `session.go` -- the local stdin/stdout protocol with the parent process
   (server.pl, in the real deployment) and session token/key generation.
 - `crypto.go` -- the ChaCha20-Poly1305 frame sealing/opening used for both
@@ -79,10 +78,39 @@ The process exited cleanly on its own ~5s after the last activity
 (idle_secs=5), confirming the idle-timeout teardown path works. No server-
 side errors were logged during the run.
 
-Not yet tested: Windows ConPTY behavior on real Windows, illumos STREAMS
-pty on real OmniOS, the max-session timeout path, multiple sequential
+## illumos smoke test (real OmniOS, 2026.09.04)
+
+Same protocol, run natively on OmniOS (omnio46, r151058, Go 1.26.7):
+
+```
+echo '{"cmd":"/bin/sh","args":["-c","cat"],"frontend_ip":"127.0.0.1","idle_secs":8,"max_secs":30}' \
+  | ./cs-console
+```
+
+`testclient` connected and did the same round trip. Result:
+
+```
+PTY said: "echo round-trip-ok\r\necho round-trip-ok\r\n"
+```
+
+The doubled `\r\n` output is the same real-PTY signature as the Linux
+test above, confirming the hand-rolled STREAMS sequence (open/grantpt/
+unlockpt/fork/setsid/reopen/I_PUSH ptem+ldterm+ttcompat/dup2/exec) works
+correctly on real illumos hardware. This was the last unverified Phase 1
+platform.
+
+Windows ConPTY was separately confirmed to spawn correctly on real
+Windows (2026.09.04, via napp-it cs's own `server.pl` integration -- see
+that project's `cs-console.info`), though its PTY relay handshake itself
+(as opposed to just the spawn) is not yet exercised the way illumos's is
+here.
+
+Not yet tested: the max-session timeout path, multiple sequential
 sessions, and anything touching the actual `server.pl` spawn/token-relay
-integration (Phase 2).
+integration over its real (encrypted, remote-member) socket path --
+both Windows and illumos have so far only been exercised locally/
+directly, not through that full path (Phase 2 integration itself is
+done and working, see napp-it cs's own docs).
 
 ## Next steps (see cs-console.info OPEN QUESTIONS / NEXT STEPS)
 

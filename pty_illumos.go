@@ -108,6 +108,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 type illumosPTY struct {
@@ -129,12 +131,15 @@ func startPTY(cfg *startConfig) (ptySession, error) {
 	}()
 
 	var cPid C.pid_t
-	masterFd := C.cs_console_illumos_start(&cArgv[0], &cPid)
+	masterFd, cerr := C.cs_console_illumos_start(&cArgv[0], &cPid)
 	if masterFd < 0 {
 		if masterFd == -2 {
 			return nil, fmt.Errorf("fork() failed starting %q under illumos pty", cfg.Cmd)
 		}
-		return nil, fmt.Errorf("starting %q under illumos pty: %w", cfg.Cmd, syscall.GetErrno())
+		// cerr is populated from errno as a side effect of the cgo call
+		// convention (the standard two-value-return idiom) -- there is no
+		// syscall.GetErrno() in Go, that was never a real function.
+		return nil, fmt.Errorf("starting %q under illumos pty: %w", cfg.Cmd, cerr)
 	}
 
 	master := os.NewFile(uintptr(masterFd), "/dev/ptmx")
@@ -147,17 +152,17 @@ func (i *illumosPTY) Write(p []byte) (int, error) { return i.master.Write(p) }
 func (i *illumosPTY) Resize(cols, rows int) error {
 	// TIOCSWINSZ works identically to the BSD/Linux ioctl once "ptem" is
 	// pushed onto the slave (ptem emulates the standard terminal ioctls,
-	// see ptem(7M)) -- UNTESTED, verify on real hardware alongside the
-	// rest of this file.
-	ws := &struct {
-		Row, Col, Xpixel, Ypixel uint16
-	}{Row: uint16(rows), Col: uint16(cols)}
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, i.master.Fd(),
-		syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(ws)))
-	if errno != 0 {
-		return errno
-	}
-	return nil
+	// see ptem(7M)). Go's stdlib syscall package has no SYS_IOCTL/raw
+	// Syscall trampoline for illumos/solaris (confirmed by grepping Go
+	// 1.26's syscall source on real OmniOS: SYS_IOCTL is defined only for
+	// linux/bsd/darwin) -- illumos's Go port wraps ioctl via libc instead,
+	// exposed through golang.org/x/sys/unix (already a project dependency).
+	// unix.IoctlSetWinsize's illumos/solaris variant (ioctl_signed.go,
+	// //go:build aix || solaris) takes an int req, matching unix.TIOCSWINSZ
+	// and unix.Winsize as defined for solaris (illumos reuses the solaris
+	// x/sys/unix files, same as it reuses stdlib syscall's solaris files).
+	ws := &unix.Winsize{Row: uint16(rows), Col: uint16(cols)}
+	return unix.IoctlSetWinsize(int(i.master.Fd()), unix.TIOCSWINSZ, ws)
 }
 
 func (i *illumosPTY) Wait() error {
