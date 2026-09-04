@@ -18,6 +18,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime"
 )
 
 // authConversation is how a platform's verifyOSAccount implementation
@@ -112,6 +114,22 @@ func encodeGateMessage(m gateMessage) []byte {
 // prompts it involved internally -- a wrong OTP after a correct password
 // is one failed attempt, not two (see cs-console.info).
 func runPasswordGate(w *sealedWriter, r *sealedReader, tmpDir, frontendIP string) error {
+	// Gea, cs_26.09.04 ("vor dem login prompt hostname und os anzeigen zur
+	// kontrolle welcher member gerade connected wird"): announce which
+	// machine this session is actually talking to BEFORE anything else --
+	// including before the lockout check below -- so the operator can spot
+	// a wrong-member mistake at a glance instead of typing a password
+	// blind and finding out afterward. hostname() failing is not fatal to
+	// the gate itself, just falls back to "unknown".
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	banner := fmt.Sprintf("cs-console: %s (%s/%s)", host, runtime.GOOS, runtime.GOARCH)
+	if werr := w.WriteFrame(encodeGateMessage(gateMessage{Type: "info", Text: banner})); werr != nil {
+		return fmt.Errorf("sending host banner: %w", werr)
+	}
+
 	if locked, retryAfter := lockoutCheck(tmpDir, frontendIP); locked {
 		_ = w.WriteFrame(encodeGateMessage(gateMessage{Type: "locked",
 			Text: fmt.Sprintf("too many attempts, try again in %ds", int(retryAfter.Seconds()))}))
