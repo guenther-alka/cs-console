@@ -9,33 +9,38 @@ package main
 // where illumos genuinely needs different code -- PAM itself does not
 // differ that way). See cs-console.info SECURITY -- PASSWORD GATE.
 //
-// STATUS: written from the PAM conversation-callback pattern (the same
-// approach libraries like msteinert/pam use), NOT yet built or run on any
-// real machine. Given this session's own experience with pty_illumos.go
-// -- hand-written cgo that had never actually compiled turned out to have
-// two real bugs on the very first build attempt on real hardware -- treat
-// every line below the same way: plausible, unverified, needs a live
-// build+test pass (ideally on the same omnio46 box, since illumos is the
-// PAM target furthest from what most cgo/PAM examples online assume)
-// before this is trusted with anything beyond a throwaway test. Likely
-// trouble spots to check first:
+// STATUS: LIVE-TESTED cs_26.09.04 -- built natively and exercised end to
+// end (wrong-password rejection, correct attempt countdown, real PAM
+// "Password:" prompt) on FOUR real, genuinely different PAM
+// implementations: illumos/OmniOS (.189 r151058 AND .203 r151056, the
+// very first real PAM test this code ever had), Linux/Proxmox (.112,
+// Linux-PAM, after installing libpam0g-dev), FreeBSD (.191, OpenPAM),
+// and macOS (.196, Apple's PAM, built with CGO_CFLAGS pointed at the
+// Xcode SDK since headers aren't under plain /usr/include there anymore).
+// See cs-console.info STATUS for the full per-member writeup. The
+// specific trouble spots below were all live-fire tested as a side
+// effect -- none of them turned out to be a real bug, but they remain
+// documented here for the next person reading this file cold:
 //   - PAM's response-array ownership/freeing contract: some PAM
 //     implementations free() the array *resp we return from the
 //     conversation callback themselves after consuming it, others expect
 //     the caller-supplied conv function's allocations to be freed by
 //     whoever called pam_authenticate -- this file assumes the former
 //     (never frees respArray itself after returning it), which is the
-//     documented Linux-PAM contract, but has NOT been checked against
-//     illumos's actual PAM implementation's own contract.
+//     documented Linux-PAM contract; illumos, FreeBSD/OpenPAM and macOS
+//     all worked correctly under this same assumption in live testing.
 //   - the "login" PAM service name (see verifyOSAccount) is a guess at a
-//     service that exists everywhere by default; illumos ships its own
-//     /etc/pam.d/other + service-specific stacks that may behave
-//     differently for "login" specifically than Linux's does.
+//     service that exists everywhere by default; confirmed working
+//     (real "Password:" prompt, correct accept/reject) on all four PAM
+//     platforms tested live.
 //   - the uintptr<->unsafe.Pointer handle trick below is a standard cgo
 //     idiom (the value is never dereferenced as a real pointer on the Go
-//     side, only used as an opaque map key), but go vet's unsafeptr
-//     check may still flag it -- confirm `go vet` is clean on the actual
-//     build platform, not just that it compiles.
+//     side, only used as an opaque map key); `go vet` flags it as an
+//     expected/accepted finding (see the inline comment lower in this
+//     file) on every platform built so far.
+// NOT yet exercised: a real 2FA-demanding PAM stack (every member tested
+// so far only asks for a single password), and concurrent sessions
+// racing against the same account/IP at once.
 
 /*
 #cgo LDFLAGS: -lpam

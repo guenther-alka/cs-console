@@ -12,11 +12,15 @@ package main
 // us as startConfig.TmpDir -- see session.go) rather than the OS's shared,
 // world-writable temp dir.
 //
-// STATUS: written from the design discussion, NOT yet live-tested (no
-// concurrent-session race testing, no real lockout-timing verification on
-// a real member) -- treat this the same way pty_illumos.go was treated
-// before its own hardware pass: trust the design, verify the code on a
-// real box before relying on it.
+// STATUS: LIVE-TESTED cs_26.09.04 on all 6 reachable cluster members
+// (Windows/my-w11, illumos/.189+.203, Linux/.112, FreeBSD/.191,
+// macOS/.196) -- 3 fails -> instant LOCKED on the next attempt -> correct
+// expiry and fresh cycle after 15s, verified end to end on every
+// platform (see cs-console.info STATUS for the full per-member writeup).
+// Still NOT exercised under real CONCURRENT-session load (two sessions
+// racing on the same IP at once) -- the note below about a rare missed
+// increment being an accepted tradeoff, not a proven-safe one, still
+// stands.
 //
 // Deliberately NOT using a cross-process file lock (flock/LockFileEx):
 // this is a secondary brake, not the primary control -- the primary

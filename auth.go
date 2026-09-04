@@ -8,12 +8,14 @@ package main
 // changes (hash scheme, lockout policy, and per Gea's later refinement,
 // 2FA IF the OS's own PAM stack demands it) need no cs-console change.
 //
-// STATUS: written from the design discussion, NOT yet live-tested on a
-// real member the way pty_illumos.go was -- see auth_unix.go / lockout.go
-// headers. Windows 2FA (there is no generic LogonUser equivalent of PAM's
-// conversational multi-prompt model) is explicitly deferred until it's
-// actually needed, per Gea's decision -- Windows verifyOSAccount only
-// ever does a single username+password exchange for now.
+// STATUS: LIVE-TESTED cs_26.09.04 on all 6 reachable cluster members
+// (Windows, illumos x2, Linux, FreeBSD, macOS) -- see auth_unix.go /
+// auth_windows.go / lockout.go headers and cs-console.info STATUS for
+// the full per-member writeup. Windows 2FA (there is no generic
+// LogonUser equivalent of PAM's conversational multi-prompt model) is
+// explicitly deferred until it's actually needed, per Gea's decision --
+// Windows verifyOSAccount only ever does a single username+password
+// exchange for now.
 
 import (
 	"encoding/json"

@@ -12,10 +12,13 @@ package main
 // different approach (e.g. the Credential Provider UI surface), not an
 // extension of this file.
 //
-// STATUS: written from the LOGON32_LOGON_NETWORK design note, NOT yet
-// built or run on any real Windows machine -- same caveat as
-// auth_unix.go: treat this as a first draft needing a live verification
-// pass before it's trusted.
+// STATUS: LIVE-TESTED cs_26.09.04 on real Windows (my-w11): wrong
+// password correctly rejected with the expected LogonUser error, correct
+// attempt countdown, DENIED after 3, lockout enforced and correctly
+// expiring (see cs-console.info STATUS for the full writeup and
+// lockout.go for the lockout side). NOT yet exercised: a real successful
+// LogonUser call (deliberately left for Gea to verify by hand, never
+// through an AI-driven session -- see testclient's own header comment).
 
 import (
 	"fmt"
