@@ -32,6 +32,10 @@ type startConfig struct {
 	FrontendIP string   `json:"frontend_ip"` // IP the session token is pinned to
 	IdleSecs   int      `json:"idle_secs"`   // 0 -> default (see main.go)
 	MaxSecs    int      `json:"max_secs"`    // 0 -> default (see main.go)
+	TmpDir     string   `json:"tmp_dir"`     // server.pl's $tpath (/opt/csweb-gui/tmp) -- used
+	// for the password-gate lockout state file (see
+	// lockout.go); optional, falls back to os.TempDir()
+	// if server.pl doesn't send it (older callers).
 }
 
 // readStartConfig reads and validates the one config line from stdin.

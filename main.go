@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	defaultIdleTimeout  = 15 * time.Minute
-	defaultMaxTimeout   = 4 * time.Hour
-	acceptWindow        = 30 * time.Second // how long we wait for the frontend to connect at all
+	defaultIdleTimeout = 15 * time.Minute
+	defaultMaxTimeout  = 4 * time.Hour
+	acceptWindow       = 30 * time.Second // how long we wait for the frontend to connect at all
 )
 
 func main() {
@@ -49,12 +49,6 @@ func run() error {
 	if cfg.MaxSecs > 0 {
 		maxTimeout = time.Duration(cfg.MaxSecs) * time.Second
 	}
-
-	pty, err := startPTY(cfg)
-	if err != nil {
-		return fmt.Errorf("starting PTY: %w", err)
-	}
-	defer pty.Close()
 
 	sessionToken, err := newSessionToken()
 	if err != nil {
@@ -83,10 +77,6 @@ func run() error {
 		return fmt.Errorf("reporting start result to server.pl: %w", err)
 	}
 
-	// PTY exit tears the whole process down regardless of connection state.
-	ptyDone := make(chan error, 1)
-	go func() { ptyDone <- pty.Wait() }()
-
 	conn, err := acceptOne(ln, cfg.FrontendIP, acceptWindow)
 	if err != nil {
 		return fmt.Errorf("accepting frontend connection: %w", err)
@@ -96,6 +86,35 @@ func run() error {
 	if err := authenticate(conn, sessionKey, sessionToken); err != nil {
 		return fmt.Errorf("authenticating frontend connection: %w", err)
 	}
+
+	// PASSWORD GATE (cs-console.info SECURITY -- PASSWORD GATE, decided
+	// cs_26.09.04): connect first (above), then password -- the target
+	// command only starts AFTER an OS-delegated password confirm, so even
+	// a mis-granted get_tty call cannot reach a shell without it. This is
+	// why startPTY moved here instead of running before the network side
+	// even existed (Phase 1's ordering, changed the same day this gate was
+	// designed).
+	gateWriter, err := newSealedWriter(conn, sessionKey)
+	if err != nil {
+		return err
+	}
+	gateReader, err := newSealedReader(conn, sessionKey)
+	if err != nil {
+		return err
+	}
+	if err := runPasswordGate(gateWriter, gateReader, cfg.TmpDir, cfg.FrontendIP); err != nil {
+		return fmt.Errorf("password gate: %w", err)
+	}
+
+	pty, err := startPTY(cfg)
+	if err != nil {
+		return fmt.Errorf("starting PTY: %w", err)
+	}
+	defer pty.Close()
+
+	// PTY exit tears the whole process down regardless of connection state.
+	ptyDone := make(chan error, 1)
+	go func() { ptyDone <- pty.Wait() }()
 
 	relayDone := make(chan struct{})
 	go relay(conn, pty, sessionKey, idleTimeout, relayDone)

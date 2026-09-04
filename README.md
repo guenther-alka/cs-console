@@ -1,13 +1,14 @@
-# cs-console -- Phase 1 prototype
+# cs-console
 
 Ephemeral, per-request interactive PTY relay for napp-it cs. Implements the
-design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D).
+design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D plus
+SECURITY -- PASSWORD GATE).
 
-**Status: standalone prototype, NOT yet wired into csweb-gui.** No
-`server.pl`/`aihelplib.pl` code has been touched. This is Phase 1 of the
-plan agreed with Gea: get the Go binary itself right and smoke-tested
-before touching production Perl code (which needs a local-sync gate first
-per project convention).
+**Status (2026.09.04): Phase 2 (server.pl `get_tty` spawn integration) is
+built and live-tested on Windows and illumos. The password gate (PAM/
+LogonUser + lockout, see below) is built and build-verified but NOT yet
+live-tested on real hardware.** Phase 3 (browser xterm.js + AI Helpdesk
+SHELL_OPEN wiring) has not been started.
 
 ## What's here
 
@@ -35,6 +36,41 @@ per project convention).
   the auth handshake and the relayed PTY data.
 - `testclient/` -- throwaway test harness used for the smoke test below,
   not part of the shipped design.
+- `lockout.go` -- brute-force lockout for the password gate below: 3
+  failed attempts locks a frontend IP out for 15s, state kept in a
+  per-IP file (SHA-256'd IP in the filename) under the tmp dir server.pl
+  passes in (falls back to `os.TempDir()` if not given). No cross-process
+  file locking (deliberate tradeoff, secondary brake not the primary
+  control). **Written 2026.09.04, NOT yet tested under real concurrent
+  load** -- a standalone arithmetic re-implementation of the state
+  machine was verified separately (3 fails -> 15s lock, counter resets),
+  but the real file-based version has not been exercised on a real
+  member.
+- `auth.go` -- platform-independent password-gate orchestration
+  (`authConversation` interface, `runPasswordGate()`): connect first,
+  then password, like PuTTY/SSH -- the lockout above is checked, then
+  `verifyOSAccount()` runs (up to 3 attempts), then and only then does
+  `main.go` start the requested PTY.
+- `auth_unix.go` (build tag `!windows`, covers linux/darwin/*bsd AND
+  illumos -- PAM's API doesn't differ there the way the PTY backend
+  does) -- PAM-based OS password verification via a cgo conversation
+  callback, generic over every PAM message style (not hardcoded to one
+  password prompt), so an OS whose PAM stack demands 2FA gets it relayed
+  transparently. **Written 2026.09.04 from the PAM conversation-callback
+  pattern, NOT yet built or run on any real machine** -- same caveat
+  `pty_illumos.go` carried before its own hardware pass: plausible,
+  unverified, needs a live build+test pass (the file's own header lists
+  the specific things most likely to be wrong: PAM's response-array
+  ownership contract, the "login" PAM service-name guess, the
+  uintptr/unsafe.Pointer handle idiom against `go vet`).
+- `auth_windows.go` (build tag `windows`) -- Windows OS password
+  verification via `LogonUser` (`LOGON32_LOGON_NETWORK`), verification
+  only (token closed immediately, no impersonation). Single
+  username+password exchange only -- no Windows 2FA support by design
+  (deferred until actually needed; there is no generic multi-factor
+  conversational API to hook into the way PAM has). **Written
+  2026.09.04, NOT yet run on any real Windows machine** (cross-compiles
+  cleanly).
 
 ## Build
 
@@ -112,13 +148,39 @@ both Windows and illumos have so far only been exercised locally/
 directly, not through that full path (Phase 2 integration itself is
 done and working, see napp-it cs's own docs).
 
+## Password gate (security hardening pass, 2026.09.04)
+
+Per `cs-console.info` SECURITY -- PASSWORD GATE: cs-console now requires an
+OS-delegated root/Administrator password confirm (PAM on Unix/illumos,
+LogonUser on Windows) after the frontend connects and authenticates by
+token/IP, but *before* the requested command's PTY is started. Up to 3
+attempts; a failed attempt locks the frontend's IP out for 15s
+(`lockout.go`); the password (or any OTP/other PAM-requested credential)
+never reaches the AI model, the chat transcript, or any log. 2FA is
+delivered transparently wherever the OS's own PAM stack demands it;
+Windows 2FA is explicitly out of scope for now (see `auth_windows.go`).
+
+**None of this has been live-tested on real hardware yet** -- it is
+build-verified only (native Linux build against real PAM headers, `go
+vet` clean, Windows cross-compile clean, gofmt clean, and a standalone
+arithmetic check of the lockout state machine). Treat it exactly like
+`pty_illumos.go` before its own OmniOS pass: plausible, not yet proven.
+
 ## Next steps (see cs-console.info OPEN QUESTIONS / NEXT STEPS)
 
 1. Test the illumos backend on a real OmniOS member.
 2. Test the Windows backend on a real Windows member.
-3. Phase 2: the `server.pl` command verb that spawns this binary and
+3. Live-test the password gate: `auth_unix.go` on real illumos/macOS/
+   *BSD hardware, `auth_windows.go` on real Windows, and `lockout.go`
+   under real concurrent-session load.
+4. Phase 2: the `server.pl` command verb that spawns this binary and
    relays session token/key to the frontend -- needs a local-sync
    checkpoint first per project convention before touching server.pl.
-4. Phase 3: the central Go daemon's WebSocket endpoint + xterm.js on the
+   (Status: DONE and live-tested on Windows/illumos for the spawn path
+   itself -- see napp-it cs's own `cs-console.info` -- the relay
+   handshake through the real remote-member socket path is still open.)
+5. Phase 3: the central Go daemon's WebSocket endpoint + xterm.js on the
    browser side, and the `aihelplib.pl` SHELL_OPEN/SHELL_INPUT/SHELL_CLOSE
-   integration for the AI Helpdesk.
+   integration for the AI Helpdesk -- including wiring the new
+   `ai_console_allowed()` operator-role exclusion into that handler once
+   it exists.
