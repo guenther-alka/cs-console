@@ -42,6 +42,10 @@ type startConfig struct {
 	// new password) -- REQUIRED for expect actions that need one. Never
 	// in the config line, so no secret lands in server.pl's config tmp
 	// file; removed by cs-console after reading.
+	Cols int `json:"cols"` // optional terminal geometry (0/0 = platform default). The web-GUI
+	Rows int `json:"rows"` // console page sends the browser terminal size (default 200x45,
+	// cs_26.09.05); applied to the PTY once at start -- the relay
+	// protocol has no resize frame yet.
 }
 
 // readStartConfig reads and validates the one config line from stdin.

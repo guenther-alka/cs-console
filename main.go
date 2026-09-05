@@ -27,10 +27,10 @@ const (
 	defaultMaxTimeout  = 4 * time.Hour
 	acceptWindow       = 30 * time.Second // how long we wait for the frontend to connect at all
 
-	// version is the release version (matches the git tag v0.5.0). Printed by
+	// version is the release version (matches the git tag v0.5.1). Printed by
 	// `cs-console version` / `--version` -- the CS_Tools_Download registry
 	// probes it to show the installed binary's version.
-	version = "0.5.0"
+	version = "0.5.1"
 )
 
 func main() {
@@ -142,6 +142,16 @@ func run() error {
 		return fmt.Errorf("starting PTY: %w", err)
 	}
 	defer pty.Close()
+
+	// Apply the requested terminal geometry (cols/rows from the web-GUI
+	// console page, default 200x45; 0/0 = keep the platform default). The
+	// PTY size is fixed once at start -- the relay protocol has no resize
+	// control frame yet (cs_26.09.05).
+	if cfg.Cols > 0 && cfg.Rows > 0 {
+		if rerr := pty.Resize(cfg.Cols, cfg.Rows); rerr != nil {
+			return fmt.Errorf("sizing PTY to %dx%d: %w", cfg.Cols, cfg.Rows, rerr)
+		}
+	}
 
 	// PTY exit tears the whole process down regardless of connection state.
 	ptyDone := make(chan error, 1)
