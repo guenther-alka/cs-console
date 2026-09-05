@@ -1,4 +1,4 @@
-//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly
+//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly || solaris
 
 package main
 
@@ -8,7 +8,8 @@ package main
 // of these platforms provide natively. See cs-console.info: this does NOT
 // cover illumos (pty_solaris.go in creack/pty has //go:build solaris only,
 // not "solaris || illumos" -- confirmed by reading the file), hence the
-// separate pty_illumos.go.
+// separate pty_illumos.go. Solaris proper IS covered here: creack/pty's
+// pty_solaris.go (pure Go, /dev/ptmx + STREAMS push) provides the PTY.
 
 import (
 	"fmt"
