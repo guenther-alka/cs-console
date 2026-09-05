@@ -29,7 +29,11 @@ func startPTY(cfg *startConfig) (ptySession, error) {
 	// shell. server.pl/the daemon environment has no TERM (or "dumb"), which
 	// makes `clear` and friends silent no-ops -- verified live (user typed
 	// "clear" in the console and nothing happened).
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// NO_COLOR=1 additionally disables ANSI color in tools that honor it
+	// (apt, git, grep, ...) -- the web console's color rendering shows e.g.
+	// apt's SGR-green package names as black-on-black (unreadable), so plain
+	// text is the safe default. TERM stays so terminfo lookups still work.
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1")
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("starting %q under pty: %w", cfg.Cmd, err)

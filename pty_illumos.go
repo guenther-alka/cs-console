@@ -110,6 +110,7 @@ static int cs_console_illumos_start(char *const argv[], pid_t *out_pid,
         if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(126);
         if (slave > 2) close(slave);
         setenv("TERM", "xterm-256color", 1); // ncurses (clear/vi/less/top) needs TERM
+        setenv("NO_COLOR", "1", 1);          // plain text (apt/git): console colors render black-on-black
         execvp(argv[0], argv);
         _exit(127); // execvp only returns on failure
     }
