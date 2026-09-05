@@ -26,9 +26,24 @@ const (
 	defaultIdleTimeout = 15 * time.Minute
 	defaultMaxTimeout  = 4 * time.Hour
 	acceptWindow       = 30 * time.Second // how long we wait for the frontend to connect at all
+
+	// version is the release version (matches the git tag v0.5.0). Printed by
+	// `cs-console version` / `--version` -- the CS_Tools_Download registry
+	// probes it to show the installed binary's version.
+	version = "0.5.0"
 )
 
 func main() {
+	// version probe must run BEFORE requireRoot()/stdin-config -- the CS
+	// tools registry runs `cs-console version` on a member without feeding a
+	// start config.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "-version", "--version", "-v":
+			fmt.Println("cs-console " + version)
+			return
+		}
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "cs-console: %v\n", err)
 		os.Exit(1)
@@ -36,9 +51,25 @@ func main() {
 }
 
 func run() error {
+	// KISS spawn boundary first, before ANY mode (expect or interactive):
+	// only a root/admin parent (server.pl) may invoke cs-console.
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
 	cfg, err := readStartConfig()
 	if err != nil {
 		return err
+	}
+
+	// EXPECT MODE (cs-console.info EXPECT MODE, decided cs_26.09.04): a
+	// scripted, allowlisted action instead of an interactive relay. No
+	// network listener, no password gate, no client -- the action table
+	// IS the protection (no free-text command possible). The web-GUI's
+	// central &expect() guard (ai_console_allowed + action allowlist +
+	// group restriction) authorizes before server.pl ever spawns us.
+	if cfg.Mode == "expect" {
+		return runExpect(cfg)
 	}
 
 	idleTimeout := defaultIdleTimeout

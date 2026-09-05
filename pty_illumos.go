@@ -168,7 +168,21 @@ func (i *illumosPTY) Resize(cols, rows int) error {
 func (i *illumosPTY) Wait() error {
 	var ws syscall.WaitStatus
 	_, err := syscall.Wait4(i.pid, &ws, 0, nil)
-	return err
+	if err != nil {
+		return err
+	}
+	// syscall.Wait4 only reports the wait syscall itself failing (ECHILD
+	// etc.) -- the child's exit status lives in ws. Report a non-zero exit
+	// or signal death as an error so expect mode's NoSuccessMarker actions
+	// (success == exit code 0) are meaningful on illumos too, matching the
+	// *exec.ExitError semantics cmd.Wait() gives the unix backend.
+	if ws.Exited() {
+		if code := ws.ExitStatus(); code != 0 {
+			return fmt.Errorf("exit status %d", code)
+		}
+		return nil
+	}
+	return fmt.Errorf("terminated abnormally: %v", ws)
 }
 
 func (i *illumosPTY) Close() error {

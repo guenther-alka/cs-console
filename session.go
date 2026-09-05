@@ -36,6 +36,12 @@ type startConfig struct {
 	// for the password-gate lockout state file (see
 	// lockout.go); optional, falls back to os.TempDir()
 	// if server.pl doesn't send it (older callers).
+	Mode       string `json:"mode"`        // "" (interactive relay) | "expect" (scripted action)
+	Action     string `json:"action"`      // expect mode: allowlisted action id (see expect.go)
+	SecretFile string `json:"secret_file"` // expect mode: 0600 file holding the secret (e.g. the
+	// new password) -- REQUIRED for expect actions that need one. Never
+	// in the config line, so no secret lands in server.pl's config tmp
+	// file; removed by cs-console after reading.
 }
 
 // readStartConfig reads and validates the one config line from stdin.
@@ -51,6 +57,12 @@ func readStartConfig() (*startConfig, error) {
 	var cfg startConfig
 	if err := json.Unmarshal(scanner.Bytes(), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing start config: %w", err)
+	}
+	if cfg.Mode == "expect" {
+		if cfg.Action == "" {
+			return nil, fmt.Errorf("expect mode requires 'action'")
+		}
+		return &cfg, nil
 	}
 	if cfg.Cmd == "" {
 		return nil, fmt.Errorf("start config missing required 'cmd'")
