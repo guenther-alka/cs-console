@@ -25,6 +25,11 @@ type unixPTY struct {
 
 func startPTY(cfg *startConfig) (ptySession, error) {
 	cmd := exec.Command(cfg.Cmd, cfg.Args...)
+	// TERM so ncurses programs (clear, vi, less, top, ...) work in the remote
+	// shell. server.pl/the daemon environment has no TERM (or "dumb"), which
+	// makes `clear` and friends silent no-ops -- verified live (user typed
+	// "clear" in the console and nothing happened).
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("starting %q under pty: %w", cfg.Cmd, err)
