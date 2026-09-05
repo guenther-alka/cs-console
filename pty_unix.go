@@ -1,4 +1,4 @@
-//go:build linux || darwin || freebsd || netbsd || openbsd || dragonfly || solaris
+//go:build (linux || darwin || freebsd || netbsd || openbsd || dragonfly || solaris) && !illumos
 
 package main
 
