@@ -65,6 +65,8 @@ import "C"
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -73,6 +75,24 @@ import (
 // starting the requested command -- see cs-console.info: "an OS-delegated
 // root/Administrator password confirm is required first".
 const gateAccount = "root"
+
+// pamServiceName returns the PAM service cs-console uses for the gate.
+// Default is "login" (a broadly available PAM service). A member operator
+// who wants a dedicated policy -- e.g. OmniOS/Solaris, where the stock
+// pam.conf "login" chain can fail root auth over a conversation
+// (pam_dhkeys/pam_dial_auth; verified live cs_26.09.05: login auth=3 while
+// a minimal chain returns auth=0) -- creates /etc/cs-console-pam-service
+// containing a service name and adds the matching block to /etc/pam.conf
+// (or /etc/pam.d/<name> on Linux/FreeBSD). Content is a single token.
+func pamServiceName() string {
+	b, err := os.ReadFile("/etc/cs-console-pam-service")
+	if err == nil {
+		if s := strings.TrimSpace(string(b)); s != "" {
+			return s
+		}
+	}
+	return "login"
+}
 
 // convRegistry maps opaque integer handles to the authConversation for
 // the PAM exchange currently in flight. cgo forbids passing a Go pointer
@@ -168,14 +188,15 @@ func verifyOSAccount(conv authConversation) error {
 
 	cUser := C.CString(gateAccount)
 	defer C.free(unsafe.Pointer(cUser))
-	// "login" is used as a broadly-available default PAM service (present
-	// in /etc/pam.d/login on effectively every PAM-based system) so no new
-	// PAM config file needs to ship with cs-console -- if a deployment
-	// wants a dedicated policy (e.g. its own 2FA requirement just for
-	// console access), a "cs-console" service file could be added and
-	// this name changed to match, but that's not needed to get OS-
-	// delegated auth working at all.
-	cService := C.CString("login")
+	// "login" is used as the default PAM service (present in /etc/pam.d/login
+	// or /etc/pam.conf on effectively every PAM-based system) so no new PAM
+	// config file needs to ship with cs-console -- unless a deployment wants
+	// a dedicated policy (e.g. its own 2FA requirement just for console
+	// access, or an OmniOS/Solaris member whose stock "login" chain rejects
+	// root over a conversation). A "cs-console" service file/block can be
+	// added and the service name selected per member via
+	// /etc/cs-console-pam-service (see pamServiceName above).
+	cService := C.CString(pamServiceName())
 	defer C.free(unsafe.Pointer(cService))
 
 	var pamConv C.struct_pam_conv

@@ -58,13 +58,19 @@ package main
 #include <signal.h>
 #include <stropts.h>
 #include <sys/stat.h>
+#include <sys/termios.h>
 #include <sys/wait.h>
 
 // Runs the full open/grantpt/unlockpt/fork/setsid/reopen/streams-push/
-// exec sequence. argv must be NULL-terminated. Returns the master fd on
-// success (>=0) and writes the child pid to *out_pid; returns -1 and sets
-// errno on failure before fork; returns -2 if fork() itself failed.
-static int cs_console_illumos_start(char *const argv[], pid_t *out_pid) {
+// exec sequence. argv must be NULL-terminated. cols/rows optionally size the
+// terminal (TIOCSWINSZ) IN THE CHILD right after the STREAMS modules are
+// pushed -- setting it from the parent races the child (modules not yet
+// pushed) and returns EINVAL on illumos (verified live on OmniOS
+// cs_26.09.05). Returns the master fd on success (>=0) and writes the child
+// pid to *out_pid; returns -1 and sets errno on failure before fork; returns
+// -2 if fork() itself failed.
+static int cs_console_illumos_start(char *const argv[], pid_t *out_pid,
+                                    unsigned short cols, unsigned short rows) {
     int master = open("/dev/ptmx", O_RDWR | O_NOCTTY);
     if (master < 0) return -1;
     if (grantpt(master) != 0) { close(master); return -1; }
@@ -90,6 +96,17 @@ static int cs_console_illumos_start(char *const argv[], pid_t *out_pid) {
         if (ioctl(slave, I_PUSH, "ptem") < 0) _exit(126);
         if (ioctl(slave, I_PUSH, "ldterm") < 0) _exit(126);
         if (ioctl(slave, I_PUSH, "ttcompat") < 0) _exit(126);
+        // Best-effort terminal geometry at spawn (see the header note): the
+        // web-GUI console opens a 200x45 terminal and the PTY must report the
+        // same size from the start. TIOCSWINSZ has to go here, in the child,
+        // after the modules are pushed -- from the parent it races this code.
+        if (cols > 0 && rows > 0) {
+            struct winsize ws;
+            memset(&ws, 0, sizeof(ws));
+            ws.ws_row = rows;
+            ws.ws_col = cols;
+            ioctl(slave, TIOCSWINSZ, &ws);
+        }
         if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(126);
         if (slave > 2) close(slave);
         execvp(argv[0], argv);
@@ -108,8 +125,6 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
-
-	"golang.org/x/sys/unix"
 )
 
 type illumosPTY struct {
@@ -131,7 +146,7 @@ func startPTY(cfg *startConfig) (ptySession, error) {
 	}()
 
 	var cPid C.pid_t
-	masterFd, cerr := C.cs_console_illumos_start(&cArgv[0], &cPid)
+	masterFd, cerr := C.cs_console_illumos_start(&cArgv[0], &cPid, C.ushort(cfg.Cols), C.ushort(cfg.Rows))
 	if masterFd < 0 {
 		if masterFd == -2 {
 			return nil, fmt.Errorf("fork() failed starting %q under illumos pty", cfg.Cmd)
@@ -150,19 +165,16 @@ func (i *illumosPTY) Read(p []byte) (int, error)  { return i.master.Read(p) }
 func (i *illumosPTY) Write(p []byte) (int, error) { return i.master.Write(p) }
 
 func (i *illumosPTY) Resize(cols, rows int) error {
-	// TIOCSWINSZ works identically to the BSD/Linux ioctl once "ptem" is
-	// pushed onto the slave (ptem emulates the standard terminal ioctls,
-	// see ptem(7M)). Go's stdlib syscall package has no SYS_IOCTL/raw
-	// Syscall trampoline for illumos/solaris (confirmed by grepping Go
-	// 1.26's syscall source on real OmniOS: SYS_IOCTL is defined only for
-	// linux/bsd/darwin) -- illumos's Go port wraps ioctl via libc instead,
-	// exposed through golang.org/x/sys/unix (already a project dependency).
-	// unix.IoctlSetWinsize's illumos/solaris variant (ioctl_signed.go,
-	// //go:build aix || solaris) takes an int req, matching unix.TIOCSWINSZ
-	// and unix.Winsize as defined for solaris (illumos reuses the solaris
-	// x/sys/unix files, same as it reuses stdlib syscall's solaris files).
-	ws := &unix.Winsize{Row: uint16(rows), Col: uint16(cols)}
-	return unix.IoctlSetWinsize(int(i.master.Fd()), unix.TIOCSWINSZ, ws)
+	// The terminal geometry is applied at spawn inside the C helper (child
+	// side, right after the STREAMS modules are pushed -- see the header of
+	// cs_console_illumos_start above). Resizing afterwards from the parent
+	// races that child setup and gets EINVAL on illumos (verified live on
+	// OmniOS cs_26.09.05), and the relay protocol has no resize frames yet
+	// anyway -- so this is intentionally a no-op. Linux/Windows size after
+	// start via their native ioctls (that is where a future wire-resize
+	// would hook in); here the browser opens a fixed 200x45 terminal and
+	// cs_console_illumos_start sizes the PTY to match from the beginning.
+	return nil
 }
 
 func (i *illumosPTY) Wait() error {
