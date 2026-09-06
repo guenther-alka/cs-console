@@ -1,0 +1,130 @@
+name: Release
+
+# Builds cs-console for Linux (amd64+arm64), Windows (amd64), macOS
+# (amd64+arm64) and FreeBSD (amd64) on GitHub-hosted runners and attaches the
+# binaries to the GitHub Release for the pushed tag.
+#
+# illumos and Solaris are deliberately NOT built by CI: GitHub Actions has no
+# illumos/Solaris runner. They are built manually on the member (cgo STREAMS
+# backend for illumos; creack/pty for solaris) and uploaded with:
+#   gh release upload <tag> cs-console-illumos-amd64 cs-console-solaris-amd64
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cgo: "1"
+            pam: true
+            asset: cs-console-linux-amd64
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            cgo: "1"
+            pam: true
+            asset: cs-console-linux-arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            cgo: "0"
+            pam: false
+            asset: cs-console-windows-amd64.exe
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            cgo: "1"
+            pam: true
+            asset: cs-console-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            cgo: "1"
+            pam: true
+            asset: cs-console-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install PAM dev headers (Linux)
+        if: matrix.pam && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libpam0g-dev
+
+      - name: Build
+        shell: bash
+        run: |
+          export GOOS="${{ matrix.goos }}"
+          export GOARCH="${{ matrix.goarch }}"
+          export CGO_ENABLED="${{ matrix.cgo }}"
+          # macOS ships PAM headers only inside the SDK, not under /usr/include
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            export CGO_CFLAGS="-I$(xcrun --show-sdk-path)/usr/include"
+          fi
+          go build -trimpath -ldflags "-s -w" -o "${{ matrix.asset }}" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  freebsd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build on FreeBSD (VM)
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          run: |
+            pkg install -y go
+            go build -trimpath -ldflags "-s -w" -o cs-console-freebsd-amd64 .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cs-console-freebsd-amd64
+          path: cs-console-freebsd-amd64
+          if-no-files-found: error
+
+  release:
+    needs: [build, freebsd]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create/update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            Prebuilt cs-console binaries (linux/windows/macOS amd64+arm64,
+            freebsd amd64) built automatically by this workflow.
+
+            illumos and Solaris are NOT built by CI (GitHub Actions has no
+            illumos/Solaris runner); their assets are built manually on the
+            member and uploaded to this release separately.
+
