@@ -8,24 +8,29 @@ SECURITY -- PASSWORD GATE).
 
 ## Status (2026.09.06)
 
-v0.5.4 released on GitHub with prebuilt binaries. The interactive console
-(open -> OS password gate -> shell) is live-verified end-to-end on Windows,
-Linux (Proxmox), illumos (OmniOS), macOS and FreeBSD. Transport is POLL (not
-SSE) through the Perl web-server with a dedicated rate-limit-free auth for
-the `/console/*` endpoints. Expect mode (`passwd_user` / `smbpasswd_user` /
-`ksmbd_user`) is committed and live-verified; root/Administrator (uid 0) is
-always refused.
+v0.5.5 released on GitHub with prebuilt binaries for 8 targets
+(windows/linux/darwin/freebsd/illumos/solaris amd64; linux+darwin also
+arm64). The interactive console (open -> OS password gate -> shell) is
+live-verified end-to-end on Windows, Linux (Proxmox), illumos (OmniOS) and
+macOS. FreeBSD binary is built and deployed (version probe verified), but
+its console path is not yet exercised. Solaris binary is built but does NOT
+yet run on real Solaris (the illumos cross-compile pulls illumos symbol
+versioning); it needs a native build (gcc on the member). Transport is POLL
+(not SSE) through the Perl web-server with a dedicated rate-limit-free auth
+for the `/console/*` endpoints. Expect mode (`passwd_user` / `smbpasswd_user`
+/ `ksmbd_user`) is committed and live-verified; root/Administrator (uid 0)
+is always refused.
 
 ## Supported platforms
 
-| Platform | Arch | PTY backend |
-| --- | --- | --- |
-| Linux | amd64, arm64 | creack/pty |
-| Windows | amd64 | ConPTY |
-| macOS | amd64, arm64 | creack/pty |
-| FreeBSD | amd64 | creack/pty |
-| illumos | amd64 | hand-rolled STREAMS (cgo) |
-| Solaris | amd64 | creack/pty (build tag present) |
+| Platform | Arch | PTY backend | Status |
+| --- | --- | --- | --- |
+| Linux | amd64, arm64 | creack/pty | live-verified |
+| Windows | amd64 | ConPTY | live-verified |
+| macOS | amd64, arm64 | creack/pty | live-verified |
+| FreeBSD | amd64 | creack/pty | binary deployed, console untested |
+| illumos | amd64 | hand-rolled STREAMS (cgo) | live-verified |
+| Solaris | amd64 | creack/pty | build only, not yet runnable |
 
 ## Password gate
 
