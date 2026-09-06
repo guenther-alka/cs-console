@@ -13,9 +13,9 @@ v0.5.5 released on GitHub with prebuilt binaries for 8 targets
 arm64). The interactive console (open -> OS password gate -> shell) is
 live-verified end-to-end on Windows, Linux (Proxmox), illumos (OmniOS) and
 macOS. FreeBSD binary is built and deployed (version probe verified), but
-its console path is not yet exercised. Solaris binary is built but does NOT
-yet run on real Solaris (the illumos cross-compile pulls illumos symbol
-versioning); it needs a native build (gcc on the member). Transport is POLL
+its console path is not yet exercised. Solaris is built natively (gcc 14 +
+Go 1.26 on the member); version probe and PTY spawn verified on real Solaris
+-- the full console (PAM gate) is not yet exercised. Transport is POLL
 (not SSE) through the Perl web-server with a dedicated rate-limit-free auth
 for the `/console/*` endpoints. Expect mode (`passwd_user` / `smbpasswd_user`
 / `ksmbd_user`) is committed and live-verified; root/Administrator (uid 0)
@@ -30,7 +30,7 @@ is always refused.
 | macOS | amd64, arm64 | creack/pty | live-verified |
 | FreeBSD | amd64 | creack/pty | binary deployed, console untested |
 | illumos | amd64 | hand-rolled STREAMS (cgo) | live-verified |
-| Solaris | amd64 | creack/pty | build only, not yet runnable |
+| Solaris | amd64 | creack/pty | native build, PTY spawn verified |
 
 ## Password gate
 
