@@ -51,11 +51,12 @@ extern int cs_console_pam_conv(int num_msg, struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr);
 
 static void cs_console_set_conv(struct pam_conv *conv, void *handle) {
-#ifdef __sun
-    // Solaris PAM declares struct pam_conv.conv with a NON-const msg
+#if defined(__sun) && !defined(__illumos__)
+    // Oracle Solaris PAM declares struct pam_conv.conv with a NON-const msg
     // parameter ("struct pam_message **"), which matches cgo's exported
     // function pointer directly -- no cast needed (a const cast would be
     // an incompatible-pointer-type hard error under GCC 14).
+    // (illumos defines __sun too, hence the !defined(__illumos__).)
     conv->conv = cs_console_pam_conv;
 #else
     // Linux/illumos/macOS/FreeBSD PAM declare the msg parameter as
