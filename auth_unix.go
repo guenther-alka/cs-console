@@ -1,4 +1,4 @@
-//go:build !windows
+ann //go:build !windows
 
 package main
 
@@ -51,13 +51,20 @@ extern int cs_console_pam_conv(int num_msg, struct pam_message **msg,
                                 struct pam_response **resp, void *appdata_ptr);
 
 static void cs_console_set_conv(struct pam_conv *conv, void *handle) {
-    // Cast needed: PAM's own struct pam_conv.conv field type declares its
-    // msg parameter as "const struct pam_message **", but cgo's exported
-    // Go function (see cs_console_pam_conv below) generates a non-const
-    // "struct pam_message **" -- Go has no const qualifier to match with.
-    // The cast is safe: cs_console_pam_conv only reads through msg, never
-    // writes through it.
+#ifdef __sun
+    // Solaris PAM declares struct pam_conv.conv with a NON-const msg
+    // parameter ("struct pam_message **"), which matches cgo's exported
+    // function pointer directly -- no cast needed (a const cast would be
+    // an incompatible-pointer-type hard error under GCC 14).
+    conv->conv = cs_console_pam_conv;
+#else
+    // Linux/illumos/macOS/FreeBSD PAM declare the msg parameter as
+    // "const struct pam_message **"; cgo's exported Go function generates
+    // a non-const "struct pam_message **" (Go has no const qualifier).
+    // The up-cast is safe: cs_console_pam_conv only reads through msg,
+    // never writes through it.
     conv->conv = (int (*)(int, const struct pam_message **, struct pam_response **, void *))cs_console_pam_conv;
+#endif
     conv->appdata_ptr = handle;
 }
 */
