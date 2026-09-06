@@ -42,7 +42,7 @@ jobs:
             cgo: "0"
             pam: false
             asset: cs-console-windows-amd64.exe
-          - os: macos-13
+          - os: macos-latest
             goos: darwin
             goarch: amd64
             cgo: "1"
