@@ -33,6 +33,23 @@ package main
 // unchanged and still stands, deliberately; what's fixed is the much
 // bigger gap of the check never repeating at all.
 //
+// VERIFIED cs_26.09.08: lockout_concurrency_test.go
+// (TestConcurrentSessionsShareOneLockoutBudget) drives lockoutCheck/
+// lockoutRecordFailure from N concurrent goroutines against one shared
+// state file, in both the OLD loop shape (check once) and the NEW shape
+// (check before every attempt), and asserts the new shape lets
+// substantially fewer attempts through AFTER the shared state has
+// already tripped, aggregated over 25 trials to smooth out the file-I/O
+// timing jitter that is itself the already-accepted residual race.
+// -race clean. What this does NOT cover: a real end-to-end concurrent
+// test through the actual network protocol / elevated cs-console
+// processes (main.go's requireRoot() needs an elevated parent -- the
+// automation session available cs_26.09.08 was not elevated, so this
+// stops at the lockout.go mechanism itself rather than the full PAM/
+// LogonUser round trip). The sequential per-member tests in
+// last_2026.09.04_09.31.info already cover that full round trip; only
+// the CONCURRENT angle is still resting on this lower-level test.
+//
 // Deliberately NOT using a cross-process file lock (flock/LockFileEx):
 // this is a secondary brake, not the primary control -- the primary
 // control is the OS's own account lockout policy (PAM/LogonUser), which
