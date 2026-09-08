@@ -16,6 +16,7 @@ package main
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -27,11 +28,26 @@ const (
 	defaultMaxTimeout  = 4 * time.Hour
 	acceptWindow       = 30 * time.Second // how long we wait for the frontend to connect at all
 
-	// version is the release version (matches the git tag v0.5.6). Printed by
+	// version is the release version (matches the git tag v0.5.7). Printed by
 	// `cs-console version` / `--version` -- the CS_Tools_Download registry
 	// probes it to show the installed binary's version.
-	version = "0.5.6"
+	version = "0.5.7"
 )
+
+// errPeerMismatch (cs_26.09.08, review Finding 2.2 -- Niedrig, "kryptische
+// Fehlermeldung bei verlorenem Connect-Fenster"): sentinel for acceptOne's
+// "wrong peer connected" case, so callers can identify this one specific,
+// extremely rare situation (needs a second process on the same frontend
+// host racing into the same 30s accept window) via errors.Is instead of
+// string-matching the technical detail message. main() below additionally
+// prints a stable, greppable marker line for this case so a future
+// cs-console.pl/server.pl consumer of our stderr can translate it into a
+// friendly GUI message ("connection rejected, please reopen the console")
+// without parsing the free-text detail -- that Perl-side consumer does not
+// exist yet (nothing today reads our post-spawn stderr live -- see
+// cs-console.info), this only prepares the Go side for it, per the
+// review's own "low risk, low priority" framing.
+var errPeerMismatch = errors.New("peer mismatch")
 
 func main() {
 	// version probe must run BEFORE requireRoot()/stdin-config -- the CS
@@ -46,6 +62,11 @@ func main() {
 	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "cs-console: %v\n", err)
+		if errors.Is(err, errPeerMismatch) {
+			// Stable marker, deliberately on its own line and independent of
+			// the detail text above -- see errPeerMismatch doc.
+			fmt.Fprintln(os.Stderr, "cs-console: CS_CONSOLE_ERR=peer_mismatch")
+		}
 		os.Exit(1)
 	}
 }
@@ -196,7 +217,7 @@ func acceptOne(ln net.Listener, expectIP string, window time.Duration) (net.Conn
 		}
 		if host != expectIP {
 			r.conn.Close()
-			return nil, fmt.Errorf("connection from %s rejected: token was issued for %s", host, expectIP)
+			return nil, fmt.Errorf("%w: connection from %s rejected (token was issued for %s)", errPeerMismatch, host, expectIP)
 		}
 		return r.conn, nil
 	case <-time.After(window):

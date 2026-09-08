@@ -162,12 +162,29 @@ func runPasswordGate(w *sealedWriter, r *sealedReader, tmpDir, frontendIP string
 
 		lockoutRecordFailure(tmpDir, frontendIP)
 		remaining := lockoutMaxAttempts - attempt
+		// FIX cs_26.09.08 (review Finding 1.2 -- Niedrig, "PAM-Service-Fehler
+		// wird nicht durchgereicht"): verifyOSAccount's err was previously
+		// discarded here except for its nil-ness -- an admin on a member
+		// whose default PAM chain itself is broken (not a wrong password,
+		// e.g. pam_start/pam_authenticate failing for a config reason) saw
+		// only the generic "authentication failed" text with no clue the
+		// problem is systemic, not a mistyped password. err's message
+		// (auth_unix.go: "pam_start/pam_authenticate/pam_acct_mgmt: <PAM's
+		// own pam_strerror() text>"; auth_windows.go: the LogonUser Win32
+		// error text) is always a fixed, non-secret module/error
+		// description -- never the submitted password or PAM conversation
+		// content -- so it's safe to surface as-is via the same Info
+		// channel already used for the attempt-countdown message.
+		detail := "authentication failed"
+		if err != nil {
+			detail = err.Error()
+		}
 		if remaining <= 0 {
 			_ = w.WriteFrame(encodeGateMessage(gateMessage{Type: "denied",
-				Text: "authentication failed, disconnecting"}))
+				Text: fmt.Sprintf("authentication failed, disconnecting (%s)", detail)}))
 			return fmt.Errorf("password gate: %d failed attempts from %s, disconnecting", attempt, frontendIP)
 		}
-		_ = conv.Info(fmt.Sprintf("authentication failed (%d attempt(s) left)", remaining))
+		_ = conv.Info(fmt.Sprintf("authentication failed (%d attempt(s) left) -- %s", remaining, detail))
 	}
 	return fmt.Errorf("password gate: unreachable") // loop always returns above
 }

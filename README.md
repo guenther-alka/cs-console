@@ -6,7 +6,20 @@ Ephemeral, per-request interactive PTY relay for napp-it cs. Implements the
 design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D plus
 SECURITY -- PASSWORD GATE).
 
-## Status (2026.09.06)
+## Status (2026.09.08)
+
+v0.5.7: fixes a concurrent-session lockout race (parallel sessions from the
+same frontend IP no longer each get their own independent 3-attempt
+budget, see `lockout.go`) plus three low-priority findings from the
+2026.09.08 review -- NO_COLOR is no longer hardcoded on (the console's
+current dark xterm.js theme renders ANSI color fine; opt back into plain
+text via `startConfig.no_color` or `CS_CONSOLE_FORCE_NO_COLOR=1`), the
+password gate now relays the actual PAM/LogonUser error text (module/error
+names only, never secrets) instead of just "authentication failed", and
+`acceptOne`'s rare wrong-peer-connected case now returns an identifiable
+sentinel error for a future caller-side friendly-message translation.
+`lockout_concurrency_test.go` regression-tests the lockout fix (-race
+clean, 25-trial aggregate).
 
 v0.5.5 released on GitHub with prebuilt binaries for 8 targets
 (windows/linux/darwin/freebsd/illumos/solaris amd64; linux+darwin also

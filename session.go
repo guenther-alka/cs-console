@@ -46,6 +46,22 @@ type startConfig struct {
 	Rows int `json:"rows"` // console page sends the browser terminal size (default 200x45,
 	// cs_26.09.05); applied to the PTY once at start -- the relay
 	// protocol has no resize frame yet.
+
+	// NoColor (cs_26.09.08, cs-console review Finding 2.1 -- Niedrig):
+	// forces NO_COLOR=1 in the spawned shell's environment (pty_unix.go /
+	// pty_illumos.go), suppressing ANSI color from color-aware tools
+	// (ls --color, git diff, journalctl, ...). Was previously hardcoded ON
+	// unconditionally, against an EARLIER xterm.js default theme where
+	// colored output rendered unreadably (e.g. black-on-black). The
+	// current console page (10_System/03_Console action.pl) has since
+	// gained an explicit dark theme with its own readable ANSI palette
+	// (background #000000; red/green/yellow/blue all clearly distinct),
+	// so color is safe and now the DEFAULT (false/omitted = color stays
+	// on). Set true to opt back into plain, escape-code-free text (e.g.
+	// for a log/scrape-friendly session) -- also settable independently
+	// of server.pl via the CS_CONSOLE_FORCE_NO_COLOR=1 process
+	// environment variable on the member (see pty_unix.go/pty_illumos.go).
+	NoColor bool `json:"no_color"`
 }
 
 // readStartConfig reads and validates the one config line from stdin.

@@ -30,11 +30,21 @@ func startPTY(cfg *startConfig) (ptySession, error) {
 	// shell. server.pl/the daemon environment has no TERM (or "dumb"), which
 	// makes `clear` and friends silent no-ops -- verified live (user typed
 	// "clear" in the console and nothing happened).
-	// NO_COLOR=1 additionally disables ANSI color in tools that honor it
-	// (apt, git, grep, ...) -- the web console's color rendering shows e.g.
-	// apt's SGR-green package names as black-on-black (unreadable), so plain
-	// text is the safe default. TERM stays so terminfo lookups still work.
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_COLOR=1")
+	// NO_COLOR: UPDATE cs_26.09.08 (review Finding 2.1 -- Niedrig, see
+	// session.go's startConfig.NoColor doc): used to be hardcoded ON
+	// unconditionally here. Confirmed against the actual deployed console
+	// theme (10_System/03_Console action.pl: background #000000,
+	// red/green/yellow/blue all distinct, readable colors) that the
+	// original black-on-black concern doesn't apply to the current
+	// xterm.js theme -- so color now stays ON by default (TERM alone is
+	// set), and NO_COLOR=1 is only added when explicitly requested via
+	// cfg.NoColor or the CS_CONSOLE_FORCE_NO_COLOR=1 member-level env
+	// override, for anyone who still wants plain, escape-code-free text.
+	env := append(os.Environ(), "TERM=xterm-256color")
+	if cfg.NoColor || os.Getenv("CS_CONSOLE_FORCE_NO_COLOR") == "1" {
+		env = append(env, "NO_COLOR=1")
+	}
+	cmd.Env = env
 	f, err := pty.Start(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("starting %q under pty: %w", cfg.Cmd, err)

@@ -65,11 +65,15 @@ package main
 // terminal (TIOCSWINSZ) IN THE CHILD right after the STREAMS modules are
 // pushed -- setting it from the parent races the child (modules not yet
 // pushed) and returns EINVAL on illumos (verified live on OmniOS
-// cs_26.09.05). Returns the master fd on success (>=0) and writes the child
-// pid to *out_pid; returns -1 and sets errno on failure before fork; returns
-// -2 if fork() itself failed.
+// cs_26.09.05). no_color (cs_26.09.08, review Finding 2.1 -- Niedrig, see
+// session.go's startConfig.NoColor doc): nonzero forces NO_COLOR=1 in the
+// child's environment; zero (the new default) leaves color on, matching
+// the current console theme's readable ANSI palette. Returns the master fd
+// on success (>=0) and writes the child pid to *out_pid; returns -1 and
+// sets errno on failure before fork; returns -2 if fork() itself failed.
 static int cs_console_illumos_start(char *const argv[], pid_t *out_pid,
-                                    unsigned short cols, unsigned short rows) {
+                                    unsigned short cols, unsigned short rows,
+                                    int no_color) {
     int master = open("/dev/ptmx", O_RDWR | O_NOCTTY);
     if (master < 0) return -1;
     if (grantpt(master) != 0) { close(master); return -1; }
@@ -109,7 +113,9 @@ static int cs_console_illumos_start(char *const argv[], pid_t *out_pid,
         if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) _exit(126);
         if (slave > 2) close(slave);
         setenv("TERM", "xterm-256color", 1); // ncurses (clear/vi/less/top) needs TERM
-        setenv("NO_COLOR", "1", 1);          // plain text (apt/git): console colors render black-on-black
+        if (no_color) {
+            setenv("NO_COLOR", "1", 1); // opt-in plain text -- see doc above
+        }
         execvp(argv[0], argv);
         _exit(127); // execvp only returns on failure
     }
@@ -146,8 +152,12 @@ func startPTY(cfg *startConfig) (ptySession, error) {
 		}
 	}()
 
+	noColor := C.int(0)
+	if cfg.NoColor || os.Getenv("CS_CONSOLE_FORCE_NO_COLOR") == "1" {
+		noColor = 1
+	}
 	var cPid C.pid_t
-	masterFd, cerr := C.cs_console_illumos_start(&cArgv[0], &cPid, C.ushort(cfg.Cols), C.ushort(cfg.Rows))
+	masterFd, cerr := C.cs_console_illumos_start(&cArgv[0], &cPid, C.ushort(cfg.Cols), C.ushort(cfg.Rows), noColor)
 	if masterFd < 0 {
 		if masterFd == -2 {
 			return nil, fmt.Errorf("fork() failed starting %q under illumos pty", cfg.Cmd)
