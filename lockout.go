@@ -17,10 +17,21 @@ package main
 // macOS/.196) -- 3 fails -> instant LOCKED on the next attempt -> correct
 // expiry and fresh cycle after 15s, verified end to end on every
 // platform (see cs-console.info STATUS for the full per-member writeup).
-// Still NOT exercised under real CONCURRENT-session load (two sessions
-// racing on the same IP at once) -- the note below about a rare missed
-// increment being an accepted tradeoff, not a proven-safe one, still
-// stands.
+// UPDATE cs_26.09.08 (Claude, cs-console review Finding 3.2 -- Mittel):
+// found and fixed a real concurrent-session gap in auth.go's
+// runPasswordGate(): lockoutCheck() was only called ONCE before its
+// 3-attempt retry loop, never again inside it, so N parallel sessions
+// from the same IP (cs-console has no standing daemon -- each spawns its
+// own independent loop) could each pass that one upfront check and then
+// each burn a full 3-attempt budget, multiplying the real guess budget by
+// N instead of sharing one 3-attempt/15s limit. Fixed: lockoutCheck() now
+// runs before EVERY attempt in the loop, not just once, so a failure
+// recorded by a sibling session is picked up immediately, mid-loop.
+// This narrows the remaining race down to the ALREADY-accepted one below
+// (the non-atomic read-modify-write on the shared counter itself, two
+// sessions truly racing on the exact same increment) -- that tradeoff is
+// unchanged and still stands, deliberately; what's fixed is the much
+// bigger gap of the check never repeating at all.
 //
 // Deliberately NOT using a cross-process file lock (flock/LockFileEx):
 // this is a secondary brake, not the primary control -- the primary

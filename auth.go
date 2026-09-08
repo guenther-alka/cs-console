@@ -132,14 +132,28 @@ func runPasswordGate(w *sealedWriter, r *sealedReader, tmpDir, frontendIP string
 		return fmt.Errorf("sending host banner: %w", werr)
 	}
 
-	if locked, retryAfter := lockoutCheck(tmpDir, frontendIP); locked {
-		_ = w.WriteFrame(encodeGateMessage(gateMessage{Type: "locked",
-			Text: fmt.Sprintf("too many attempts, try again in %ds", int(retryAfter.Seconds()))}))
-		return fmt.Errorf("frontend %s is locked out for %s", frontendIP, retryAfter)
-	}
-
+	// FIX cs_26.09.08 (Claude, cs-console review Finding 3.2 -- Mittel,
+	// "concurrent-session lockout race"): lockoutCheck used to run ONCE
+	// here, before the retry loop below, never again inside it. Because
+	// cs-console is spawned fresh per request (no standing daemon -- see
+	// design point B) with its own independent 3-attempt loop, two or more
+	// parallel sessions from the same frontend IP could each pass this one
+	// upfront check before any of them had recorded a single failure, then
+	// each burn through their own full 3-attempt budget -- N concurrent
+	// sessions effectively multiplying the real guess budget by N instead
+	// of sharing one 3-attempt/15s limit. Fix: re-check the shared on-disk
+	// lockout state before EVERY attempt, not just once, so a failure
+	// recorded by a sibling session (lockoutRecordFailure below, same
+	// state file, see lockout.go) is picked up immediately by this session
+	// too, mid-loop -- not only on its next fresh spawn.
 	conv := &sealedConversation{w: w, r: r}
 	for attempt := 1; attempt <= lockoutMaxAttempts; attempt++ {
+		if locked, retryAfter := lockoutCheck(tmpDir, frontendIP); locked {
+			_ = w.WriteFrame(encodeGateMessage(gateMessage{Type: "locked",
+				Text: fmt.Sprintf("too many attempts, try again in %ds", int(retryAfter.Seconds()))}))
+			return fmt.Errorf("frontend %s is locked out for %s", frontendIP, retryAfter)
+		}
+
 		err := verifyOSAccount(conv)
 		if err == nil {
 			lockoutReset(tmpDir, frontendIP)

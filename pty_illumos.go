@@ -2,7 +2,8 @@
 
 package main
 
-// illumos PTY backend -- HAND-ROLLED, UNTESTED ON REAL HARDWARE.
+// illumos PTY backend -- HAND-ROLLED, LIVE-VERIFIED ON REAL HARDWARE
+// (OmniOS, cs_26.09.05; see README.md "Supported platforms").
 //
 // illumos libc has never shipped openpty()/forkpty()/login_tty() (see
 // https://illumos.org/issues/5386, still open), so unlike every other
@@ -36,18 +37,16 @@ package main
 // developer/gcc` on OmniOS -- at build time for this platform only; the
 // other platforms' backends are pure Go).
 //
-// STATUS: written from the documented pattern, has NOT been built or run
-// on real illumos/OmniOS hardware yet -- see cs-console.info OPEN
-// QUESTIONS item 1. Treat every syscall constant and struct layout below
-// as needing verification on a real machine before this is trusted with
-// anything beyond a throwaway test. Likely trouble spots to check first:
-//   - exact I_PUSH ioctl constant value and the "strioctl"-vs-plain-string
-//     argument form actually expected by illumos' streamio.h (this uses
-//     the plain-string form documented in ptem(7M)/streamio(7I));
-//   - whether grantpt()/unlockpt()/ptsname() are present as expected in
-//     OmniOS's current libc, and their exact signatures;
-//   - error handling / retry needs around EINTR that a real test run
-//     would surface.
+// STATUS (updated cs_26.09.08, Claude review -- was stale, see
+// cs-console_review_2026-09-08.md Finding 4.1): this was written from the
+// documented pattern and originally shipped marked "untested on real
+// hardware"; it has since been built and run live on OmniOS (cs_26.09.05,
+// see the "verified live on OmniOS" TIOCSWINSZ-race fix below, and
+// README.md's "Supported platforms" table). Still genuinely open per
+// cs-console.info OPEN QUESTIONS item 1: the relay handshake through
+// server.pl's real remote-member encrypted socket path has only been
+// tested locally/directly so far, not yet over an actual remote-member
+// connection.
 
 /*
 #include <stdlib.h>
