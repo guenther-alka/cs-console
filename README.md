@@ -1,10 +1,11 @@
 # cs-console
 
-> **This is a first release candidate for evaluations.**
+> **This is a first release candidate.**
 
 Ephemeral, per-request interactive PTY relay for napp-it cs. Implements the
 design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D plus
 SECURITY -- PASSWORD GATE).
+csweb-gui deploys and updates this manually per member menu About > Download cs-tools
 
 ## Status (2026.09.08)
 
