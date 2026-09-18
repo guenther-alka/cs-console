@@ -110,8 +110,23 @@ var validEncryptionAlg = map[string]bool{
 // (05_Create/action.pl, keysource=passphrase,file://...), which stays
 // unchanged and remains the only path for keysplit (L1/L2/W1/W2), since
 // keysplit needs real key bytes on disk, not a prompt (cs_26.09.18 design
-// discussion). Both prompts CAPTURED+VERIFIED live cs_26.09.18: Solaris on
-// 192.168.2.50 (11.4.90.212.0), Windows on my-w11 (OpenZFS On Windows).
+// discussion).
+//
+// Three, not two, prompt variants -- CAPTURED+VERIFIED live cs_26.09.18 on
+// all three, do not collapse back to a solaris/else split:
+//   - Solaris (legacy keysource property): own command family entirely.
+//   - Windows (OpenZFS On Windows): customizes the upstream prompt text --
+//     VERIFIED on my-w11: "Enter new passphrase:" / "Re-enter new
+//     passphrase:".
+//   - illumos/Linux/FreeBSD/macOS (genuine upstream OpenZFS zfs binary):
+//     plain upstream text -- VERIFIED on illumos (OmniOS 192.168.2.189):
+//     "Enter passphrase:" / "Re-enter passphrase:", no "new", no dataset
+//     name. Initially assumed (wrongly) to share Windows's text since both
+//     use keyformat/keylocation -- live-tested this specifically because
+//     of that assumption, and it was wrong: the two ports diverged on
+//     this string. Not independently re-verified on Linux/FreeBSD/macOS,
+//     but those share one upstream zfs_prompt.c with illumos, unlike
+//     Windows's separate port, so the same text is expected there.
 func resolveZFSCreate(a []string) (string, []string, []string, error) {
 	if len(a) < 2 || a[0] == "" || a[1] == "" {
 		return "", nil, nil, fmt.Errorf("zfs_create_enc_prompt requires dataset and encryption arguments")
@@ -123,15 +138,20 @@ func resolveZFSCreate(a []string) (string, []string, []string, error) {
 	if !validEncryptionAlg[enc] {
 		return "", nil, nil, fmt.Errorf("unsupported encryption algorithm %q", enc)
 	}
-	if runtime.GOOS == "solaris" {
+	switch runtime.GOOS {
+	case "solaris":
 		// Legacy combined property; this Solaris 11.4.90.212.0 build has
 		// no keyformat/keylocation/load-key at all (CONFIRMED live,
 		// cs_26.09.18: "invalid property" / "unrecognized command").
 		return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keysource=passphrase,prompt", dataset},
 			[]string{fmt.Sprintf("Enter passphrase for '%s': ", dataset), "Enter again: "}, nil
+	case "windows":
+		return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keyformat=passphrase", "-o", "keylocation=prompt", dataset},
+			[]string{"Enter new passphrase:", "Re-enter new passphrase:"}, nil
+	default:
+		return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keyformat=passphrase", "-o", "keylocation=prompt", dataset},
+			[]string{"Enter passphrase:", "Re-enter passphrase:"}, nil
 	}
-	return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keyformat=passphrase", "-o", "keylocation=prompt", dataset},
-		[]string{"Enter new passphrase:", "Re-enter new passphrase:"}, nil
 }
 
 func resolveZFSCreateVerify(a []string) (string, []string, string, error) {

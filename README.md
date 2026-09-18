@@ -25,10 +25,17 @@ both applying to every expect action, not just these two: a Windows
 ConPTY line-ending bug (bare `"\n"` never submitted a line there; fixed
 via a GOOS-aware `lineEnding()`, `"\r\n"` on Windows) and an ANSI-escape-
 in-the-middle-of-a-prompt bug found on ConPTY (norm() now strips escape
-sequences before matching). See `cs-console.info` EXPECT MODE section,
-STATUS UPDATE cs_26.09.18, for the full writeup. Remaining wiring: the
-web-GUI menu action + server.pl/aihelplib allowlist mirroring (not yet
-built).
+sequences before matching). A third real bug: illumos's create prompt
+text ("Enter passphrase:" / "Re-enter passphrase:") was wrongly assumed
+to match Windows's ("Enter new passphrase:" / "Re-enter new
+passphrase:") since both are keyformat/keylocation OpenZFS variants --
+live-tested that assumption on illumos (OmniOS) and it was wrong, fixed
+by splitting create's prompt resolver into solaris/windows/default
+instead of solaris/else. All three platforms (Solaris, Windows, illumos)
+live-verified end-to-end through the real production expect path after
+the fix. See `cs-console.info` EXPECT MODE section, STATUS UPDATE
+cs_26.09.18, for the full writeup. Remaining wiring: the web-GUI menu
+action + server.pl/aihelplib allowlist mirroring (not yet built).
 
 v0.5.7: fixes a concurrent-session lockout race (parallel sessions from the
 same frontend IP no longer each get their own independent 3-attempt
