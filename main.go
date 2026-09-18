@@ -28,10 +28,10 @@ const (
 	defaultMaxTimeout  = 4 * time.Hour
 	acceptWindow       = 30 * time.Second // how long we wait for the frontend to connect at all
 
-	// version is the release version (matches the git tag v0.5.7). Printed by
+	// version is the release version (matches the git tag v0.5.8). Printed by
 	// `cs-console version` / `--version` -- the CS_Tools_Download registry
 	// probes it to show the installed binary's version.
-	version = "0.5.7"
+	version = "0.5.8"
 )
 
 // errPeerMismatch (cs_26.09.08, review Finding 2.2 -- Niedrig, "kryptische

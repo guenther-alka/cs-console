@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -37,11 +39,147 @@ type expectAction struct {
 	ID              string   // allowlist id, e.g. "passwd_user"
 	Cmd             string   // fixed program (resolved via PATH; never a shell)
 	Args            []string // fixed argv template; "{user}" = cfg.Args[0]
-	Prompts         []string // ordered prompt tokens to await (each followed by secret + "\n")
+	Prompts         []string // ordered prompt tokens to await (each followed by secret + line ending)
 	SuccessMarker   string   // required success output fragment ("" = exit-code based)
 	FailMarkers     []string // any of these anywhere -> abort as failure
 	NoSuccessMarker bool     // program prints no success text (e.g. smbpasswd):
 	// success = process exit code 0 AND no fail marker (cs_26.09.05)
+
+	// Resolve, when set, computes cmd/args/prompts per invocation instead
+	// of using the static Cmd/Args/Prompts above -- needed when the
+	// command family differs by platform (Solaris legacy keysource/`zfs
+	// key` vs OpenZFS keyformat+keylocation/`load-key`) and/or a prompt
+	// has the dataset name embedded in it (cs_26.09.18, zfs create/unlock
+	// prompt actions). When set, Args placeholder substitution and the
+	// {user}/isPrivilegedTarget check above are skipped -- Resolve is
+	// responsible for its own argument validation.
+	Resolve func(cfgArgs []string) (cmd string, args []string, prompts []string, err error)
+
+	// PostResolve, when set, runs one additional NON-interactive command
+	// after the interactive PTY step succeeds (e.g. `zfs mount <dataset>`
+	// after `load-key`, which does not cascade-mount -- se.info sec.2,
+	// CAPTURED+VERIFIED live on Windows cs_26.09.18: mounted=no after
+	// load-key until an explicit `zfs mount`). Returning cmd=="" skips it
+	// (e.g. Solaris `zfs key -l` mounts on its own, VERIFIED live
+	// cs_26.09.18).
+	PostResolve func(cfgArgs []string) (cmd string, args []string, err error)
+
+	// VerifyResolve, when set, is the AUTHORITATIVE success check run
+	// after the interactive step (and PostResolve, if any): se.info's
+	// documented rule for every key operation in this project is "never
+	// trust the command's own exit code/output alone -- always re-read
+	// the property fresh". Returns the argv for a read-only `zfs get`
+	// and the expected trimmed value; a mismatch or run error is failure
+	// regardless of what the PTY output looked like.
+	VerifyResolve func(cfgArgs []string) (cmd string, args []string, want string, err error)
+}
+
+// lineEnding is the byte sequence written after a secret to submit it to
+// the child's line-input layer. Existing expectTable actions (passwd_user
+// etc.) were only ever CAPTURED+VERIFIED against Unix ttys, where canonical
+// line discipline treats "\n" alone as Enter -- so this keeps sending plain
+// "\n" there (no behavior change). ConPTY on Windows is a real VT100-style
+// terminal input stream where Enter is CR ("\r"); a bare "\n" was CONFIRMED
+// live (cs_26.09.18, zfs create probe on my-w11) to never register as a
+// submitted line -- the child just hangs forever waiting on the prompt.
+// "\r\n" was CAPTURED+VERIFIED to work correctly there.
+func lineEnding() string {
+	if runtime.GOOS == "windows" {
+		return "\r\n"
+	}
+	return "\n"
+}
+
+// validDatasetName / validEncryptionAlg: expect args go straight into argv
+// (never a shell), so this isn't injection defense -- it's a sanity gate so
+// a typo'd dataset/algorithm fails fast with a clear error instead of
+// silently producing a confusing zfs error deep inside the PTY dialog, and
+// so a dataset string starting with "-" can never be misread as a flag.
+var validDatasetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:/-]*$`)
+
+var validEncryptionAlg = map[string]bool{
+	"on":          true,
+	"aes-128-ccm": true, "aes-192-ccm": true, "aes-256-ccm": true,
+	"aes-128-gcm": true, "aes-192-gcm": true, "aes-256-gcm": true,
+}
+
+// resolveZFSCreate implements the "zfs_create_enc_prompt" action: create an
+// encrypted dataset with a user-typed passphrase (keylocation=prompt),
+// never persisted to any file -- see se.info MODE A. This is the
+// prompt-based counterpart to napp-it's existing file-based create path
+// (05_Create/action.pl, keysource=passphrase,file://...), which stays
+// unchanged and remains the only path for keysplit (L1/L2/W1/W2), since
+// keysplit needs real key bytes on disk, not a prompt (cs_26.09.18 design
+// discussion). Both prompts CAPTURED+VERIFIED live cs_26.09.18: Solaris on
+// 192.168.2.50 (11.4.90.212.0), Windows on my-w11 (OpenZFS On Windows).
+func resolveZFSCreate(a []string) (string, []string, []string, error) {
+	if len(a) < 2 || a[0] == "" || a[1] == "" {
+		return "", nil, nil, fmt.Errorf("zfs_create_enc_prompt requires dataset and encryption arguments")
+	}
+	dataset, enc := a[0], a[1]
+	if !validDatasetName.MatchString(dataset) {
+		return "", nil, nil, fmt.Errorf("invalid dataset name %q", dataset)
+	}
+	if !validEncryptionAlg[enc] {
+		return "", nil, nil, fmt.Errorf("unsupported encryption algorithm %q", enc)
+	}
+	if runtime.GOOS == "solaris" {
+		// Legacy combined property; this Solaris 11.4.90.212.0 build has
+		// no keyformat/keylocation/load-key at all (CONFIRMED live,
+		// cs_26.09.18: "invalid property" / "unrecognized command").
+		return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keysource=passphrase,prompt", dataset},
+			[]string{fmt.Sprintf("Enter passphrase for '%s': ", dataset), "Enter again: "}, nil
+	}
+	return "zfs", []string{"create", "-o", "encryption=" + enc, "-o", "keyformat=passphrase", "-o", "keylocation=prompt", dataset},
+		[]string{"Enter new passphrase:", "Re-enter new passphrase:"}, nil
+}
+
+func resolveZFSCreateVerify(a []string) (string, []string, string, error) {
+	return "zfs", []string{"get", "-H", "-o", "value", "keystatus", a[0]}, "available", nil
+}
+
+// resolveZFSUnlock implements the "zfs_unlock_enc_prompt" action: unlock an
+// already-created keylocation=prompt dataset by typing the passphrase
+// interactively. This is the ONLY way to unlock such a dataset on Solaris
+// 11 or Windows -- both were CONFIRMED live (cs_26.09.18) to reject
+// non-interactive/piped stdin outright (Solaris: immediate "key not found";
+// Windows: hangs forever on a real console, piped stdin fully ignored,
+// compounded by zfs.exe self-elevating into a fresh disconnected console
+// under UAC when the caller lacks a real admin token -- irrelevant here
+// since cs-console's own caller already runs elevated). File-based/keysplit
+// members keep using server.pl's existing non-interactive `load-key -L
+// file://...` override path (sub unlock) -- unaffected by this action.
+func resolveZFSUnlock(a []string) (string, []string, []string, error) {
+	if len(a) < 1 || a[0] == "" {
+		return "", nil, nil, fmt.Errorf("zfs_unlock_enc_prompt requires a dataset argument")
+	}
+	dataset := a[0]
+	if !validDatasetName.MatchString(dataset) {
+		return "", nil, nil, fmt.Errorf("invalid dataset name %q", dataset)
+	}
+	if runtime.GOOS == "solaris" {
+		return "zfs", []string{"key", "-l", dataset},
+			[]string{fmt.Sprintf("Enter passphrase for '%s': ", dataset)}, nil
+	}
+	return "zfs", []string{"load-key", dataset},
+		[]string{fmt.Sprintf("Enter passphrase for '%s':", dataset)}, nil
+}
+
+// resolveZFSUnlockPost: OpenZFS `load-key` does not cascade-mount (se.info
+// sec.2; CONFIRMED live cs_26.09.18 on Windows: mounted=no right after
+// load-key, mounted=yes only after an explicit `zfs mount`). Solaris's
+// legacy `zfs key -l` mounts as part of the one command (CONFIRMED live
+// cs_26.09.18 on 192.168.2.50: mounted=yes immediately, `mount` shows the
+// filesystem) -- no post-step there.
+func resolveZFSUnlockPost(a []string) (string, []string, error) {
+	if runtime.GOOS == "solaris" {
+		return "", nil, nil
+	}
+	return "zfs", []string{"mount", a[0]}, nil
+}
+
+func resolveZFSUnlockVerify(a []string) (string, []string, string, error) {
+	return "zfs", []string{"get", "-H", "-o", "value", "keystatus", a[0]}, "available", nil
 }
 
 // expectTable -- the compiled allowlist. Hand-verified per platform.
@@ -94,6 +232,32 @@ var expectTable = []expectAction{
 		SuccessMarker: "Updated user",
 		FailMarkers:   []string{"does not exist", "already exists", "mismatch", "error", "failed"},
 	},
+	{
+		// zfs_create_enc_prompt: create an encrypted dataset with a
+		// user-typed passphrase (keylocation=prompt), never persisted to
+		// any file -- see se.info MODE A. cfg.Args = [dataset, encryption].
+		// NoSuccessMarker: neither platform prints anything past the two
+		// prompts on success (CAPTURED+VERIFIED live cs_26.09.18); the
+		// authoritative check is VerifyResolve (keystatus==available), not
+		// this text/exit-code gate -- kept as a first-pass sanity net only.
+		ID:              "zfs_create_enc_prompt",
+		Resolve:         resolveZFSCreate,
+		VerifyResolve:   resolveZFSCreateVerify,
+		NoSuccessMarker: true,
+	},
+	{
+		// zfs_unlock_enc_prompt: unlock a keylocation=prompt dataset by
+		// typing the passphrase interactively -- the only way to unlock
+		// one on Solaris 11 / Windows (see resolveZFSUnlock doc comment).
+		// cfg.Args = [dataset]. NoSuccessMarker for the same reason as
+		// create; PostResolve mounts on non-Solaris (load-key doesn't
+		// cascade-mount); VerifyResolve is authoritative.
+		ID:              "zfs_unlock_enc_prompt",
+		Resolve:         resolveZFSUnlock,
+		PostResolve:     resolveZFSUnlockPost,
+		VerifyResolve:   resolveZFSUnlockVerify,
+		NoSuccessMarker: true,
+	},
 }
 
 func expectActionByName(id string) *expectAction {
@@ -120,32 +284,50 @@ func runExpect(cfg *startConfig) error {
 	if act == nil {
 		return writeExpectResult(false, fmt.Sprintf("unknown expect action %q", cfg.Action))
 	}
-	args := make([]string, 0, len(act.Args))
-	for _, a := range act.Args {
-		if a == "{user}" {
-			if len(cfg.Args) < 1 || cfg.Args[0] == "" {
-				return writeExpectResult(false, "expect action "+cfg.Action+" requires a user argument")
-			}
-			args = append(args, cfg.Args[0])
-		} else {
-			args = append(args, a)
+
+	var cmd string
+	var args []string
+	var prompts []string
+
+	if act.Resolve != nil {
+		// Dynamic actions (dataset name embedded in argv/prompts,
+		// platform-specific command family) own their own validation.
+		var rerr error
+		cmd, args, prompts, rerr = act.Resolve(cfg.Args)
+		if rerr != nil {
+			return writeExpectResult(false, rerr.Error())
 		}
+	} else {
+		cmd = act.Cmd
+		args = make([]string, 0, len(act.Args))
+		for _, a := range act.Args {
+			if a == "{user}" {
+				if len(cfg.Args) < 1 || cfg.Args[0] == "" {
+					return writeExpectResult(false, "expect action "+cfg.Action+" requires a user argument")
+				}
+				args = append(args, cfg.Args[0])
+			} else {
+				args = append(args, a)
+			}
+		}
+		// RESTRICTION (Gea, cs_26.09.05): never change the root/Administrator
+		// password through a direct expect action -- that requires the
+		// interactive console (shell-mode login). Reject any uid-0 target.
+		if len(args) > 0 && isPrivilegedTarget(args[0]) {
+			return writeExpectResult(false, "changing the root/administrator password is not allowed via expect -- it requires the interactive console (shell-mode login)")
+		}
+		prompts = act.Prompts
 	}
+
 	secret, err := readExpectSecret(cfg)
 	if err != nil {
 		return writeExpectResult(false, err.Error())
 	}
-	// RESTRICTION (Gea, cs_26.09.05): never change the root/Administrator
-	// password through a direct expect action -- that requires the
-	// interactive console (shell-mode login). Reject any uid-0 target.
-	if len(args) > 0 && isPrivilegedTarget(args[0]) {
-		return writeExpectResult(false, "changing the root/administrator password is not allowed via expect -- it requires the interactive console (shell-mode login)")
-	}
 	_ = os.Setenv("LC_ALL", "C") // deterministic prompts; inherited by the child
 
-	pty, err := startPTY(&startConfig{Cmd: act.Cmd, Args: args})
+	pty, err := startPTY(&startConfig{Cmd: cmd, Args: args})
 	if err != nil {
-		return writeExpectResult(false, fmt.Sprintf("starting %q: %v", act.Cmd, err))
+		return writeExpectResult(false, fmt.Sprintf("starting %q: %v", cmd, err))
 	}
 	defer pty.Close()
 
@@ -160,15 +342,15 @@ func runExpect(cfg *startConfig) error {
 	go func() { ptyDone <- pty.Wait() }()
 
 	stepTimeout := 30 * time.Second
-	for _, prompt := range act.Prompts {
+	for _, prompt := range prompts {
 		if err := out.await(prompt, stepTimeout, readerDone); err != nil {
-			return writeExpectResult(false, fmt.Sprintf("%s: %v", act.Cmd, err))
+			return writeExpectResult(false, fmt.Sprintf("%s: %v", cmd, err))
 		}
 		if frag := out.hasAny(act.FailMarkers); frag != "" {
-			return writeExpectResult(false, fmt.Sprintf("%s: failed (output shows %q)", act.Cmd, frag))
+			return writeExpectResult(false, fmt.Sprintf("%s: failed (output shows %q)", cmd, frag))
 		}
-		if _, err := pty.Write([]byte(secret + "\n")); err != nil {
-			return writeExpectResult(false, fmt.Sprintf("%s: writing response: %v", act.Cmd, err))
+		if _, err := pty.Write([]byte(secret + lineEnding())); err != nil {
+			return writeExpectResult(false, fmt.Sprintf("%s: writing response: %v", cmd, err))
 		}
 	}
 
@@ -194,21 +376,52 @@ func runExpect(cfg *startConfig) error {
 			waitErr = fmt.Errorf("exit status unavailable")
 		}
 	case <-time.After(60 * time.Second):
-		return writeExpectResult(false, fmt.Sprintf("%s: timed out waiting for exit", act.Cmd))
+		return writeExpectResult(false, fmt.Sprintf("%s: timed out waiting for exit", cmd))
 	}
 
 	if frag := out.hasAny(act.FailMarkers); frag != "" {
-		return writeExpectResult(false, fmt.Sprintf("%s: failed (output shows %q)", act.Cmd, frag))
+		return writeExpectResult(false, fmt.Sprintf("%s: failed (output shows %q)", cmd, frag))
 	}
-	if act.NoSuccessMarker {
-		if waitErr != nil {
-			return writeExpectResult(false, fmt.Sprintf("%s: exited with error: %v", act.Cmd, waitErr))
+	if act.NoSuccessMarker && waitErr != nil {
+		return writeExpectResult(false, fmt.Sprintf("%s: exited with error: %v", cmd, waitErr))
+	}
+	if !act.NoSuccessMarker && !out.has(act.SuccessMarker) {
+		return writeExpectResult(false, fmt.Sprintf("%s: no success marker; output: %s", cmd, out.tail(200)))
+	}
+
+	// Optional non-interactive follow-up (e.g. `zfs mount` after
+	// `load-key`, which does not cascade-mount -- se.info sec.2).
+	if act.PostResolve != nil {
+		pcmd, pargs, perr := act.PostResolve(cfg.Args)
+		if perr != nil {
+			return writeExpectResult(false, perr.Error())
 		}
-		return writeExpectResult(true, strings.TrimSpace(out.tail(200)))
+		if pcmd != "" {
+			pout, runErr := exec.Command(pcmd, pargs...).CombinedOutput()
+			if runErr != nil {
+				return writeExpectResult(false, fmt.Sprintf("%s %s: %v (%s)", pcmd, strings.Join(pargs, " "), runErr, strings.TrimSpace(string(pout))))
+			}
+		}
 	}
-	if !out.has(act.SuccessMarker) {
-		return writeExpectResult(false, fmt.Sprintf("%s: no success marker; output: %s", act.Cmd, out.tail(200)))
+
+	// AUTHORITATIVE success check (se.info: never trust exit code/output
+	// alone for key operations -- always re-read the property fresh).
+	if act.VerifyResolve != nil {
+		vcmd, vargs, want, verr := act.VerifyResolve(cfg.Args)
+		if verr != nil {
+			return writeExpectResult(false, verr.Error())
+		}
+		vout, runErr := exec.Command(vcmd, vargs...).Output()
+		got := strings.TrimSpace(string(vout))
+		if runErr != nil {
+			return writeExpectResult(false, fmt.Sprintf("verifying result (%s %s): %v", vcmd, strings.Join(vargs, " "), runErr))
+		}
+		if got != want {
+			return writeExpectResult(false, fmt.Sprintf("%s: verification failed, expected keystatus %q, got %q", cmd, want, got))
+		}
+		return writeExpectResult(true, fmt.Sprintf("confirmed (keystatus=%s)", got))
 	}
+
 	return writeExpectResult(true, strings.TrimSpace(out.tail(200)))
 }
 
@@ -254,9 +467,28 @@ func (o *ptyOut) raw() string {
 	return string(o.buf)
 }
 
-// norm lowercases and collapses whitespace so prompt matching is robust
-// against \r vs \n / trailing-space differences (LC_ALL=C keeps the text).
+// ansiEscape matches VT/ANSI escape sequences (CSI "\x1b[...<letter>", OSC
+// "\x1b]...BEL", and bare "\x1b<letter>") so norm() can strip them before
+// matching. DISCOVERED live cs_26.09.18 building the zfs create/unlock
+// actions on Windows: ConPTY's session-start preamble (cursor
+// hide/clear/home) races with the child's first prompt write and lands its
+// OSC window-title-set sequence IN THE MIDDLE of the prompt text itself --
+// e.g. the raw bytes for "Enter new passphrase:" arrived as literal "E",
+// then a full "\x1b]0;...zfs.exe\a" OSC title sequence, then literal "nter
+// new passphrase:". The two halves are visually adjacent when Go prints the
+// string quoted (%q) but are NOT a contiguous substring in the actual byte
+// stream, so plain Contains() matching silently times out forever even
+// though the prompt is genuinely there. Stripping escape sequences first
+// fixes this for any prompt on any platform (harmless no-op on ttys that
+// never emit these).
+var ansiEscape = regexp.MustCompile(`\x1b(\[[0-9;?]*[A-Za-z]|\][^\a\x1b]*(\a|\x1b\\)|[A-Za-z])`)
+
+// norm strips ANSI/VT escape sequences, lowercases, and collapses
+// whitespace so prompt matching is robust against \r vs \n / trailing-space
+// differences (LC_ALL=C keeps the text itself deterministic) and against
+// escape sequences landing inside the prompt text (see ansiEscape doc).
 func norm(s string) string {
+	s = ansiEscape.ReplaceAllString(s, "")
 	s = strings.ToLower(s)
 	return strings.Join(strings.Fields(s), " ")
 }

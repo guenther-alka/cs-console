@@ -7,7 +7,28 @@ design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D plus
 SECURITY -- PASSWORD GATE).
 csweb-gui deploys and updates this manually per member menu About > Download cs-tools
 
-## Status (2026.09.08)
+## Status (2026.09.18)
+
+v0.5.8: two new expect-mode actions, `zfs_create_enc_prompt` /
+`zfs_unlock_enc_prompt` -- create/unlock a `keylocation=prompt` encrypted
+dataset by typing the passphrase interactively. Needed because Solaris 11
+and Windows (OpenZFS On Windows) both confirmed-reject non-interactive
+stdin for prompt-mode ZFS key entry (Solaris fails immediately; Windows
+hangs on a real console, piped stdin fully ignored) -- this is the ONLY
+way to drive that flow on those two platforms. Existing file-based create
+(napp-it's own `05_Create/action.pl`) and keysplit are unaffected and
+unchanged; those still need real key bytes on disk, which a prompt can't
+provide. All four prompt strings (Solaris create/unlock, Windows
+create/unlock) CAPTURED + VERIFIED live before shipping, matching this
+project's usual discipline. Two related robustness fixes landed with it,
+both applying to every expect action, not just these two: a Windows
+ConPTY line-ending bug (bare `"\n"` never submitted a line there; fixed
+via a GOOS-aware `lineEnding()`, `"\r\n"` on Windows) and an ANSI-escape-
+in-the-middle-of-a-prompt bug found on ConPTY (norm() now strips escape
+sequences before matching). See `cs-console.info` EXPECT MODE section,
+STATUS UPDATE cs_26.09.18, for the full writeup. Remaining wiring: the
+web-GUI menu action + server.pl/aihelplib allowlist mirroring (not yet
+built).
 
 v0.5.7: fixes a concurrent-session lockout race (parallel sessions from the
 same frontend IP no longer each get their own independent 3-attempt
