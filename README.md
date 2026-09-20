@@ -1,6 +1,11 @@
 # cs-console
 
-> **This is a first release candidate.**
+Signed-off-by: Guenther Alka gea@napp-it.org<br>
+Concept Co-Authored-By: Claude Fable 5 noreply@anthropic.com<br>
+
+Part of the [napp-it 4ai (client-server edition)](https://napp-it.org) cluster tooling family
+(alongside [cs-tools](https://www.napp-it.org/cs-tools_en.html))
+csweb-gui deploys and updates this manually per member menu About > Download cs-tools
 
 Ephemeral, per-request interactive PTY relay for napp-it 4ai (client-server). Implements the
 design in `csweb-gui/data/howto.ai/cs-console.info` (design points A-D plus
