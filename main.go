@@ -31,7 +31,7 @@ const (
 	// version is the release version (matches the git tag v0.5.8). Printed by
 	// `cs-console version` / `--version` -- the CS_Tools_Download registry
 	// probes it to show the installed binary's version.
-	version = "0.5.8"
+	version = "0.5.9"
 )
 
 // errPeerMismatch (cs_26.09.08, review Finding 2.2 -- Niedrig, "kryptische
